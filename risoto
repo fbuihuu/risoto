@@ -1,0 +1,287 @@
+#! /bin/bash
+#
+# For an introduction on how to create bootable iso:
+# http://wiki.osdev.org/El-Torito
+#
+# Inspired by archiso tool available on Archlinux.
+#
+set -e
+
+usage() {
+	echo >&2 "$(basename $0): [-v] [--config=<file>] [--compressor=<squashfs-comp>] [--tmpdir=<dir>] <target>"
+	exit
+}
+
+die() {
+	echo >&2 $*
+	exit 1
+}
+
+xchroot() {
+	if test $rootfs = '/'; then
+		"$@"
+		return
+	fi
+	chroot $rootfs env -i PATH=bin:/usr/bin:/sbin:/usr/sbin "$@"
+}
+
+get_file_arch() {
+	case $(file -L -b $1) in
+	ELF\ 64-bit*)	echo x86_64 ;;
+	ELF\ 32-bit*)	echo x86_32 ;;
+	*)		die "can't guess file bin arch: $1"
+	esac
+}
+
+excluded_files=()
+exclude_file() {
+	excluded_files+=("${1##/}")
+}
+
+cleanup_on_exit() {
+	$clean_tmpdir && rm -fr $tmpdir
+}
+trap cleanup_on_exit 0
+
+#
+# Parse passed options.
+#
+clean_tmpdir=true
+tmpdir=$(mktemp -d --tmpdir $(basename $0).XXXXX)
+verbose=false
+compressor=
+conf=
+
+while :
+do
+	case $1 in
+	-v|--verbose)
+		verbose=true ;;
+	--config=*)
+		conf=${1#--config=} ;;
+	--compressor=*)
+		compressor=${1#--compressor=} ;;
+	--tmpdir=*)
+		clean_tmpdir=false
+		tmpdir=${1#--tmpdir=} ;;
+	-*)
+		usage ;;
+	*)
+		break
+	esac
+	shift
+done
+
+pushd . >/dev/null
+
+test $# -eq 1 ||
+usage
+
+rootfs=$(readlink -f $1)
+test -d $rootfs ||
+die "rootfs directory not found: '$1'"
+
+tmpdir=$(readlink -f $tmpdir)
+test -d $tmpdir ||
+die "invalid temporary directory: '$tmpdir'"
+
+if test -n "$conf"; then
+	test -r "$conf" && source "$conf" ||
+	die "Failed to read config file: $conf"
+fi
+
+: ${compressor:=$SQUASHFS_COMPRESSOR}
+
+distributor=$(xchroot lsb_release -is)
+distribution=$(xchroot lsb_release -ds)
+distribution=$(eval echo $distribution) # drop the stupid double quotes
+
+iso_label=${distributor}_$(date +%Y%m%d)
+iso_fname=${distribution// /-}-live-$(date +%Y%m%d).iso
+iso_fname=$(echo $iso_fname | tr "[:upper:]" "[:lower:]")
+
+# arch is the rootfs architecture. We assume that the kernel's arch is
+# the same.
+arch=$(get_file_arch $rootfs/usr/bin/ld)
+
+install_syslinux() {
+	mkdir -p $distributor/boot/syslinux
+	cd $distributor/boot/syslinux
+
+	# Import syslinux from its directory installation. We should
+	# probably use /boot instead.
+	cp $rootfs/usr/lib/syslinux/bios/ldlinux.c32 .
+	cp $rootfs/usr/lib/syslinux/bios/menu.c32 .
+	cp $rootfs/usr/lib/syslinux/bios/libutil.c32 .
+
+	cat >syslinux.cfg<<EOF
+UI boot/syslinux/menu.c32
+MENU TITLE $distributor
+${LOADER_TIMEOUT:+TIMEOUT $((LOADER_TIMEOUT * 10))}
+
+LABEL label
+    MENU LABEL $distribution
+    LINUX  boot/$arch/vmlinuz
+    INITRD boot/$arch/initrd.img
+    APPEND root=LABEL=$iso_label rd.overlay rd.overlay.img=$distributor/$arch/rootfs.squashfs $KERNEL_CMDLINE
+EOF
+	cd - >/dev/null
+}
+
+install_kernel() {
+	mkdir -p $distributor/boot/$arch
+	cd $distributor/boot/$arch
+
+	# import kernel image
+	cp $rootfs/boot/initrd-*.img initrd.img
+	cp $rootfs/boot/vmlinuz-* vmlinuz
+
+	cd - >/dev/null
+}
+
+install_isolinux() {
+	# prepare /isolinux
+	mkdir -p isolinux
+	cd isolinux
+
+	cp $rootfs/usr/lib/syslinux/bios/isolinux.bin .
+	cp $rootfs/usr/lib/syslinux/bios/isohdpfx.bin .
+	cp $rootfs/usr/lib/syslinux/bios/ldlinux.c32  .
+
+	cat >isolinux.cfg<<EOF
+PATH /$distributor/boot/syslinux/
+DEFAULT loadconfig
+
+LABEL loadconfig
+  CONFIG /$distributor/boot/syslinux/syslinux.cfg
+  APPEND /$distributor/
+EOF
+	cd - >/dev/null
+}
+
+install_gummiboot() {
+	#
+	# UEFI: create efitboot.img and mark it as a alternative boot image.
+	#
+	mkdir -p EFI/$distributor
+	pushd EFI >/dev/null
+
+	truncate -s 31M $distributor/efiboot.img
+	mkfs.vfat -n ISO_EFI $distributor/efiboot.img >/dev/null
+
+	# mount efiboot.img
+	mount $distributor/efiboot.img $distributor
+
+	cd $distributor
+	mkdir -p EFI/$distributor
+	cp $tmpdir/$distributor/boot/$arch/vmlinuz EFI/$distributor/
+	cp $tmpdir/$distributor/boot/$arch/initrd.img EFI/$distributor/
+
+	mkdir -p EFI/boot
+	cp $rootfs/usr/lib/gummiboot/gummibootx64.efi EFI/boot/BOOTX64.EFI
+
+	mkdir -p loader/entries
+	cat >loader/loader.conf<<EOF
+${LOADER_TIMEOUT:+timeout $LOADER_TIMEOUT}
+default iso-$arch
+EOF
+
+	cat >loader/entries/iso-$arch.conf<<EOF
+title   $distribution $arch (Live)
+linux   /EFI/$distributor/vmlinuz
+initrd  /EFI/$distributor/initrd.img
+options root=LABEL=$iso_label rd.overlay rd.overlay.img=$distributor/$arch/rootfs.squashfs $KERNEL_CMDLINE
+EOF
+	cd ..
+	umount $distributor
+
+	# additionnal xorriso options.
+	xorriso_efi_args="-eltorito-alt-boot
+                   -e EFI/$distributor/efiboot.img
+                   -no-emul-boot
+                   -isohybrid-gpt-basdat"
+
+	popd >/dev/null
+}
+
+create_rootfs_image() {
+	#
+	# generate rootfs squashfs image
+	#
+	# mksquashfs source1 source2 ...  dest [options] [-e list of exclude dirs/files]
+	#
+	# WTF is this fancy command line interface ??
+	#
+	mkdir -p $distributor/$arch
+
+	exclude_file /boot/\*
+	exclude_file /sys/\*
+	exclude_file /proc/\*
+	exclude_file /dev/\*
+	exclude_file /etc/fstab
+	test $rootfs = '/' && exclude_file $tmpdir
+
+	# The command line interface of mksquashfs sucks, really.
+	if $verbose; then
+		exec 3>&1
+	else
+		exec 3>/dev/null
+	fi
+
+	echo >&2 "Creating SquashFS image for rootfs, this may take a while..."
+	mksquashfs $rootfs $distributor/$arch/rootfs.squashfs \
+		-noappend \
+		${compressor:+-comp $compressor} \
+		-wildcards \
+		-e "${excluded_files[@]}" >&3
+}
+
+create_iso() {
+	#
+	# Build the ISO
+	#
+	echo >&2 "Creating ISO image $(basename $iso_fname)..."
+	xorriso -as mkisofs \
+		$($verbose || echo -quiet) \
+		-iso-level 3 \
+		-full-iso9660-filenames \
+		-volid "$iso_label" \
+		-appid "$distribution Live CD" \
+		-publisher "$distributor" \
+		-preparer "prepared by $(basename $0)" \
+		-eltorito-boot isolinux/isolinux.bin \
+		-eltorito-catalog isolinux/boot.cat \
+		-no-emul-boot -boot-load-size 4 -boot-info-table \
+		-isohybrid-mbr $tmpdir/isolinux/isohdpfx.bin \
+		$xorriso_efi_args \
+		-output $1 \
+		$2
+}
+
+
+pushd $tmpdir >/dev/null
+install_syslinux
+install_kernel
+install_isolinux
+install_gummiboot
+create_rootfs_image
+popd >/dev/null
+
+create_iso $iso_fname $tmpdir
+
+#
+# Show some stats.
+#
+if type iso-info &>/dev/null; then
+	iso-info --no-header $iso_fname
+fi
+echo
+echo "__________________________________"
+ls -lh $iso_fname
+cd $tmpdir
+tree .
+echo
+ls -lh $distributor/$arch/rootfs.squashfs \
+	$distributor/boot/$arch/vmlinuz \
+	$distributor/boot/$arch/initrd.img
+echo
