@@ -12,6 +12,10 @@ usage() {
 	exit
 }
 
+warn() {
+	echo >&2 $*
+}
+
 die() {
 	echo >&2 $*
 	exit 1
@@ -228,7 +232,7 @@ create_rootfs_image() {
 		exec 3>/dev/null
 	fi
 
-	echo >&2 "Creating SquashFS image for rootfs, this may take a while..."
+	warn "Creating SquashFS image for rootfs, this may take a while..."
 	mksquashfs $rootfs $distributor/$arch/rootfs.squashfs \
 		-noappend \
 		${compressor:+-comp $compressor} \
@@ -240,7 +244,7 @@ create_iso() {
 	#
 	# Build the ISO
 	#
-	echo >&2 "Creating ISO image $(basename $iso_fname)..."
+	warn "Creating ISO image $(basename $iso_fname)..."
 	xorriso -as mkisofs \
 		$($verbose || echo -quiet) \
 		-iso-level 3 \
