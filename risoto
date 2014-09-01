@@ -294,10 +294,12 @@ install_gummiboot() {
 	truncate -s 31M $distributor/efiboot.img
 	mkfs.vfat -n ISO_EFI $distributor/efiboot.img >/dev/null
 
-	# mount efiboot.img
+	# mount efiboot.img and make sure it gets unmounted whatever
+	# the way we return from this function.
 	mount $distributor/efiboot.img $distributor
-
 	cd $distributor
+	umount -l ../$distributor
+
 	mkdir -p EFI/$distributor
 	cp $tmpdir/$distributor/boot/$arch/vmlinuz EFI/$distributor/
 	cp $tmpdir/$distributor/boot/$arch/initrd.img EFI/$distributor/
@@ -318,7 +320,6 @@ initrd  /EFI/$distributor/initrd.img
 options root=LABEL=$iso_label rd.overlay rd.overlay.img=$distributor/$arch/rootfs.squashfs $KERNEL_CMDLINE
 EOF
 	cd ..
-	umount $distributor
 
 	# additionnal xorriso options.
 	xorriso_efi_args="-eltorito-alt-boot
