@@ -280,6 +280,11 @@ EOF
 }
 
 install_gummiboot() {
+	test -f $rootfs/usr/lib/gummiboot/gummibootx64.efi || {
+		warn "gummiboot is missing: only BIOS systems will be supported."
+		return 0
+	}
+
 	#
 	# UEFI: create efitboot.img and mark it as a alternative boot image.
 	#
