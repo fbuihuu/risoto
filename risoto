@@ -43,9 +43,122 @@ exclude_file() {
 }
 
 cleanup_on_exit() {
+	test $homedir && umount $homedir
+	test $srvdir  && umount $srvdir
+	test $espdir  && umount $espdir
+	test $rootdir && umount $rootdir
+	test $rootdir && rmdir $rootdir
+	test $loopdev && losetup -d $loopdev
 	$clean_tmpdir && rm -fr $tmpdir
 }
 trap cleanup_on_exit 0
+
+#
+# Prepare the target.
+#
+GPT_ROOT_X86_64=4f68bce3-e8cd-4db1-96e7-fbcaf984b709
+GPT_ESP=c12a7328-f81f-11d2-ba4b-00a0c93ec93b
+GPT_HOME=933ac7e1-2eb4-4f13-b844-0e14e2aef915
+GPT_SWAP=0657fd6d-a4ab-43c4-84e5-0933c84b4f4f
+GPT_SRV=3b8f8425-20e0-4f3b-907f-1a25a76f98e8
+
+rootdir=
+espdir=
+homedir=
+srvdir=
+
+loopdev=
+
+prepare_image() {
+	local image=$1
+
+	losetup --read-only -f $image &&
+	loopdev=$(losetup -j $image) &&
+	loopdev=${loopdev%%:*}
+}
+
+prepare_device() {
+	local dev=$1
+
+	pttype=$(blkid -s PTTYPE -o value $dev) ||
+	return
+
+	if test "$pttype" != 'gpt'; then
+		warn "device or image doesn't use GUID Partition Table."
+		return 1
+	fi
+
+	#
+	# FIXME: I need to do that in order lsblk to return parttype
+	# values otherwise it returns empty values.
+	#
+	udevadm settle
+
+	lines=$(lsblk -n --raw --paths -o NAME,PARTTYPE $dev) ||
+	return
+
+	while read path parttype
+	do
+		case $parttype in
+		$GPT_ROOT_X86_64)	root=$path ;;
+		$GPT_ESP)		esp=$path ;;
+		$GPT_HOME)		home=$path ;;
+		$GPT_SRV)		srv=$path ;;
+		*)			;;
+		esac
+	done < <(echo "$lines")
+
+	if ! test $root; then
+		warn 'Failed to find the root partition.'
+		warn 'Note that the device or image must follow:'
+		warn 'http://www.freedesktop.org/wiki/Specifications/DiscoverablePartitionsSpec/'
+		return 1
+       fi
+
+	# Mount all discovered partitions
+	rootdir=$(mktemp -d --tmpdir $(basename $0).rootdir.XXXXX) &&
+	mount -o ro $root $rootdir ||
+	return
+
+	if test $esp; then
+		# assume ESP mountpoint is /boot
+		mount -o ro $esp $rootdir/boot &&
+		espdir=$rootdir/boot ||
+		return
+	fi
+	if test $home; then
+		mount -o ro $home $rootdir/home &&
+		homedir=$rootdir/home ||
+		return
+	fi
+	if test $srv; then
+		mount -o ro $srv $rootdir/srv &&
+		srvdir=$rootdir/srv ||
+		return
+	fi
+}
+
+
+prepare_rootfs() {
+	target=$(readlink -f $1)
+
+	test -f "$target" &&
+	prepare_image "$target" &&
+	target=$loopdev ||
+	return
+
+	test -b "$target" &&
+	prepare_device "$target" &&
+	target=$rootdir ||
+	return
+
+	test -d "$target" &&
+	rootfs=$target &&
+	return
+
+	warn "invalid target: must be a fs device/image or a directory."
+}
+
 
 #
 # Parse passed options.
@@ -81,10 +194,6 @@ pushd . >/dev/null
 test $# -eq 1 ||
 usage
 
-rootfs=$(readlink -f $1)
-test -d $rootfs ||
-die "rootfs directory not found: '$1'"
-
 tmpdir=$(readlink -f $tmpdir)
 test -d $tmpdir ||
 die "invalid temporary directory: '$tmpdir'"
@@ -95,6 +204,13 @@ if test -n "$conf"; then
 fi
 
 : ${compressor:=$SQUASHFS_COMPRESSOR}
+
+#
+# Prepare the target, if needed, so we can access the fs at $rootfs
+# directory.
+#
+prepare_rootfs "$1" ||
+exit
 
 distributor=$(xchroot lsb_release -is)
 distribution=$(xchroot lsb_release -ds)
