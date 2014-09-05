@@ -89,8 +89,9 @@ prepare_device() {
 	fi
 
 	#
-	# FIXME: I need to do that in order lsblk to return parttype
-	# values otherwise it returns empty values.
+	# lsblk(8) relies on udev to retrieve block device
+	# metadata. Since the loop device has just been set make sure
+	# udev has updated its DB accordingly.
 	#
 	udevadm settle
 
