@@ -257,7 +257,7 @@ install_kernel() {
 	cd $distributor/boot/$arch
 
 	# import kernel image
-	cp $rootfs/boot/initrd-*.img initramfs.img
+	cp $rootfs/boot/initr*-*.img initramfs.img
 	cp $rootfs/boot/vmlinuz-* vmlinuz
 
 	cd - >/dev/null
