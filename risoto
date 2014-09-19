@@ -80,38 +80,39 @@ prepare_image() {
 prepare_device() {
 	local dev=$1
 
-	pttype=$(blkid -s PTTYPE -o value $dev) ||
-	return
-
-	if test "$pttype" != 'gpt'; then
-		warn "device or image doesn't use GUID Partition Table."
-		return 1
-	fi
-
 	#
-	# lsblk(8) relies on udev to retrieve block device
-	# metadata. Since the loop device has just been set make sure
-	# udev has updated its DB accordingly.
+	# Since the loop device has just been set make sure udev has
+	# updated its DB accordingly.
 	#
 	udevadm settle
 
-	lines=$(lsblk -n --raw --paths -o NAME,PARTTYPE $dev) ||
-	return
+	for p in $dev*; do
+		properties=$(udevadm info --query=property --export --name=$p) &&
+		eval "$properties" ||
+		return
 
-	while read path parttype
-	do
-		case $parttype in
-		$GPT_ROOT_X86_64)	root=$path ;;
-		$GPT_ESP)		esp=$path ;;
-		$GPT_HOME)		home=$path ;;
-		$GPT_SRV)		srv=$path ;;
-		*)			;;
+		case $DEVTYPE in
+		disk)
+			test $ID_PART_TABLE_TYPE != 'gpt' &&
+			break
+			;;
+		partition)
+			case $ID_PART_ENTRY_TYPE in
+			$GPT_ROOT_X86_64)	root=$DEVNAME ;;
+			$GPT_ESP)		esp=$DEVNAME ;;
+			$GPT_HOME)		home=$DEVNAME ;;
+			$GPT_SRV)		srv=$DEVNAME ;;
+			*)			;;
+			esac
 		esac
-	done < <(echo "$lines")
+	done
 
 	if ! test $root; then
-		warn 'Failed to find the root partition.'
-		warn 'Note that the device or image must follow:'
+		warn 'Failed to find the root partition. The device or image'
+		warn 'you provided must use a GUID Partition Table and must'
+		warn 'follow this specification in order to be mounted by risoto'
+		warn 'automatically:'
+		warn
 		warn 'http://www.freedesktop.org/wiki/Specifications/DiscoverablePartitionsSpec/'
 		return 1
        fi
