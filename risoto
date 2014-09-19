@@ -143,19 +143,22 @@ prepare_device() {
 prepare_rootfs() {
 	target=$(readlink -f $1)
 
-	test -f "$target" &&
-	prepare_image "$target" &&
-	target=$loopdev ||
-	return
+	if test -f "$target"; then
+		prepare_image "$target" &&
+		target=$loopdev ||
+		return
+	fi
 
-	test -b "$target" &&
-	prepare_device "$target" &&
-	target=$rootdir ||
-	return
+	if test -b "$target"; then
+		prepare_device "$target" &&
+		target=$rootdir ||
+		return
+	fi
 
-	test -d "$target" &&
-	rootfs=$target &&
-	return
+	if test -d "$target"; then
+		rootfs=$target
+		return
+	fi
 
 	warn "invalid target: must be a fs device/image or a directory."
 }
