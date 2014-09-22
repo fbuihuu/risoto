@@ -8,7 +8,7 @@
 set -e
 
 usage() {
-	echo >&2 "$(basename $0): [-v] [--config=<file>] [--compressor=<squashfs-comp>] [--tmpdir=<dir>] <target>"
+	echo >&2 "$(basename $0): [-v] [--compressor=<squashfs-comp>] [--tmpdir=<dir>] <config-file> <target>"
 	exit
 }
 
@@ -179,8 +179,6 @@ do
 	case $1 in
 	-v|--verbose)
 		verbose=true ;;
-	--config=*)
-		conf=${1#--config=} ;;
 	--compressor=*)
 		compressor=${1#--compressor=} ;;
 	--tmpdir=*)
@@ -196,17 +194,19 @@ done
 
 pushd . >/dev/null
 
-test $# -eq 1 ||
+test $# -eq 2 ||
 usage
 
 tmpdir=$(readlink -f $tmpdir)
 test -d $tmpdir ||
 die "invalid temporary directory: '$tmpdir'"
 
-if test -n "$conf"; then
-	test -r "$conf" && source "$conf" ||
-	die "Failed to read config file: $conf"
-fi
+#
+# Read the config file
+#
+conf=$(readlink -f $1)
+test -r "$conf" && source "$conf" ||
+die "Failed to read config file: $conf"
 
 : ${compressor:=$SQUASHFS_COMPRESSOR}
 
@@ -214,9 +214,13 @@ fi
 # Prepare the target, if needed, so we can access the fs at $rootfs
 # directory.
 #
-prepare_rootfs "$1" ||
+prepare_rootfs "$2" ||
 exit
 
+#
+# Setup a couple of global vars. Most of them are 'exported' to the
+# bootloader's config files.
+#
 distributor=$(xchroot lsb_release -is)
 distribution=$(xchroot lsb_release -ds)
 distribution=$(eval echo $distribution) # drop the stupid double quotes
@@ -225,11 +229,57 @@ iso_label=${distributor}_$(date +%Y%m%d)
 iso_fname=${distribution// /-}-live-$(date +%Y%m%d).iso
 iso_fname=$(echo $iso_fname | tr "[:upper:]" "[:lower:]")
 
+vmlinux=$rootfs/boot/vmlinuz-*
+initramfs=$rootfs/boot/initr*-*.img
+
 # arch is the rootfs architecture. We assume that the kernel's arch is
 # the same.
 arch=$(get_file_arch $rootfs/usr/bin/ld)
 
+# Where the kernel and initramfs will be found by a bios system.
+bios_vmlinux=$distributor/boot/$arch/vmlinuz
+bios_initramfs=$distributor/boot/$arch/initramfs.img
+
+# Where the kernel and initramfs will be found by a uefi system.
+uefi_vmlinux=EFI/$distributor/vmlinuz
+uefi_initramfs=EFI/$distributor/initramfs.img
+
+# The place where we store the RO image of the rootfs.
+rootfs_ro_image=$distributor/$arch/rootfs.squashfs
+
+#
+#
+#
+parse_bootloader_conf () {
+	sed -e "s|@@ISO_LABEL@@|$iso_label|"			\
+		-e "s|@@DISTRIBUTOR@@|$distributor|"		\
+		-e "s|@@DISTRIBUTION@@|$distribution|"		\
+		-e "s|@@ROOTFS_RO_IMAGE@@|/$rootfs_ro_image|"	\
+		-e "s|@@BIOS_VMLINUX@@|/$bios_vmlinux|"		\
+		-e "s|@@BIOS_INITRAMFS@@|/$bios_initramfs|"	\
+		-e "s|@@UEFI_VMLINUX@@|/$uefi_vmlinux|"		\
+		-e "s|@@UEFI_INITRAMFS@@|/$uefi_initramfs|" $1
+}
+
 install_syslinux() {
+	local config
+
+	# Relative path is relative to the installation config file.
+	case $SYSLINUX_CONFIG in
+	'')
+		warn 'You must provide a path to the syslinux config file.'
+		return 1 ;;
+	/*)
+		config=$SYSLINUX_CONFIG ;;
+	*)
+		config=$(dirname $conf)/$SYSLINUX_CONFIG ;;
+	esac
+
+	test -f "$config" || {
+		warn "Failed to read syslinux config file: '$config'."
+		return 1
+	}
+
 	mkdir -p $distributor/boot/syslinux
 	cd $distributor/boot/syslinux
 
@@ -239,29 +289,18 @@ install_syslinux() {
 	cp $rootfs/usr/lib/syslinux/bios/menu.c32 .
 	cp $rootfs/usr/lib/syslinux/bios/libutil.c32 .
 
-	cat >syslinux.cfg<<EOF
-UI boot/syslinux/menu.c32
-MENU TITLE $distributor
-${LOADER_TIMEOUT:+TIMEOUT $((LOADER_TIMEOUT * 10))}
+	parse_bootloader_conf $config >syslinux.cfg
 
-LABEL label
-    MENU LABEL $distribution
-    LINUX  boot/$arch/vmlinuz
-    INITRD boot/$arch/initramfs.img
-    APPEND root=LABEL=$iso_label rd.overlay rd.overlay.img=$distributor/$arch/rootfs.squashfs $KERNEL_CMDLINE
-EOF
 	cd - >/dev/null
 }
 
 install_kernel() {
-	mkdir -p $distributor/boot/$arch
-	cd $distributor/boot/$arch
+	mkdir -p $(dirname $bios_vmlinux)
 
 	# import kernel image
-	cp $rootfs/boot/initr*-*.img initramfs.img
-	cp $rootfs/boot/vmlinuz-* vmlinuz
+	cp $initramfs $bios_initramfs
+	cp $vmlinux   $bios_vmlinux
 
-	cd - >/dev/null
 }
 
 install_isolinux() {
@@ -279,15 +318,47 @@ DEFAULT loadconfig
 
 LABEL loadconfig
   CONFIG /$distributor/boot/syslinux/syslinux.cfg
-  APPEND /$distributor/
 EOF
 	cd - >/dev/null
 }
 
 install_gummiboot() {
+	local config
+
+	# Relative path is relative to the installation config file.
+	case $GUMMIBOOT_CONFIG in
+	'')
+		warn "no gummiboot config file provided, skipping gummiboot installation."
+		return 0 ;;
+	/*)
+		config=$GUMMIBOOT_CONFIG ;;
+	*)
+		config=$(dirname $conf)/$GUMMIBOOT_CONFIG ;;
+	esac
+
 	test -f $rootfs/usr/lib/gummiboot/gummibootx64.efi || {
 		warn "gummiboot is missing: only BIOS systems will be supported."
 		return 0
+	}
+
+	#
+	# Retrieve the default entry
+	#
+	test -f "$config" || {
+		warn "Failed to read '$config'."
+		return 1
+	}
+
+	default=$(sed -ne 's/^[[:space:]]*default[[:space:]]*//p' $config)
+	test $default || {
+		warn "Default entry is missing from the gummiboot config file."
+		return 1
+	}
+
+	default_conf=$(dirname $config)/$default.conf.in
+	test -f $default_conf || {
+		warn "Failed to read config file for gummiboot's default entry."
+		return 1
 	}
 
 	#
@@ -305,25 +376,18 @@ install_gummiboot() {
 	cd $distributor
 	umount -l ../$distributor
 
-	mkdir -p EFI/$distributor
-	cp $tmpdir/$distributor/boot/$arch/vmlinuz EFI/$distributor/
-	cp $tmpdir/$distributor/boot/$arch/initramfs.img EFI/$distributor/
+	mkdir -p $(dirname $uefi_vmlinux)
+
+	cp $vmlinux $uefi_vmlinux
+	cp $initramfs $uefi_initramfs
 
 	mkdir -p EFI/boot
 	cp $rootfs/usr/lib/gummiboot/gummibootx64.efi EFI/boot/BOOTX64.EFI
 
 	mkdir -p loader/entries
-	cat >loader/loader.conf<<EOF
-${LOADER_TIMEOUT:+timeout $LOADER_TIMEOUT}
-default iso-$arch
-EOF
+	cp $config loader/loader.conf
+	parse_bootloader_conf $default_conf >loader/entries/$default.conf
 
-	cat >loader/entries/iso-$arch.conf<<EOF
-title   $distribution $arch (Live)
-linux   /EFI/$distributor/vmlinuz
-initrd  /EFI/$distributor/initramfs.img
-options root=LABEL=$iso_label rd.overlay rd.overlay.img=$distributor/$arch/rootfs.squashfs $KERNEL_CMDLINE
-EOF
 	cd ..
 
 	# additionnal xorriso options.
@@ -339,11 +403,7 @@ create_rootfs_image() {
 	#
 	# generate rootfs squashfs image
 	#
-	# mksquashfs source1 source2 ...  dest [options] [-e list of exclude dirs/files]
-	#
-	# WTF is this fancy command line interface ??
-	#
-	mkdir -p $distributor/$arch
+	mkdir -p $(dirname $rootfs_ro_image)
 
 	exclude_file /boot/\*
 	exclude_file /sys/\*
@@ -360,7 +420,12 @@ create_rootfs_image() {
 	fi
 
 	warn "Creating SquashFS image for rootfs, this may take a while..."
-	mksquashfs $rootfs $distributor/$arch/rootfs.squashfs \
+	#
+	# mksquashfs source1 source2 ...  dest [options] [-e list of exclude dirs/files]
+	#
+	# WTH is this fancy command line interface ??
+	#
+	mksquashfs $rootfs $rootfs_ro_image \
 		-noappend \
 		${compressor:+-comp $compressor} \
 		-wildcards \

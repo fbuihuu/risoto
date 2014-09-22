@@ -1,0 +1,9 @@
+UI menu.c32
+MENU TITLE @@DISTRIBUTOR@@
+TIMEOUT 30
+
+LABEL label
+    MENU LABEL @@DISTRIBUTION@@
+    LINUX  @@BIOS_VMLINUX@@
+    INITRD @@BIOS_INITRAMFS@@
+    APPEND root=LABEL=@@ISO_LABEL@@ rd.overlay rd.overlay.img=@@ROOTFS_RO_IMAGE@@ quiet

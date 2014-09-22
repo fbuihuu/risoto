@@ -1,0 +1,4 @@
+title     @@DISTRIBUTION@@ (Live)
+linux     @@UEFI_VMLINUX@@
+initrd    @@UEFI_INITRAMFS@@
+options   root=LABEL=@@ISO_LABEL@@ rd.overlay rd.overlay.img=@@ROOTFS_RO_IMAGE@@ quiet
