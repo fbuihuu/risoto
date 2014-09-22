@@ -280,6 +280,11 @@ install_syslinux() {
 		return 1
 	}
 
+	# import kernel image
+	mkdir -p $(dirname $bios_vmlinux)
+	cp $initramfs $bios_initramfs
+	cp $vmlinux   $bios_vmlinux
+
 	mkdir -p $distributor/boot/syslinux
 	cd $distributor/boot/syslinux
 
@@ -292,15 +297,6 @@ install_syslinux() {
 	parse_bootloader_conf $config >syslinux.cfg
 
 	cd - >/dev/null
-}
-
-install_kernel() {
-	mkdir -p $(dirname $bios_vmlinux)
-
-	# import kernel image
-	cp $initramfs $bios_initramfs
-	cp $vmlinux   $bios_vmlinux
-
 }
 
 install_isolinux() {
@@ -457,7 +453,6 @@ create_iso() {
 
 pushd $tmpdir >/dev/null
 install_syslinux
-install_kernel
 install_isolinux
 install_gummiboot
 create_rootfs_image
