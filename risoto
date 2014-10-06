@@ -75,16 +75,16 @@ prepare_image() {
 	losetup --read-only -f $image &&
 	loopdev=$(losetup -j $image) &&
 	loopdev=${loopdev%%:*}
-}
-
-prepare_device() {
-	local dev=$1
 
 	#
 	# Since the loop device has just been set make sure udev has
 	# updated its DB accordingly.
 	#
 	udevadm settle
+}
+
+prepare_device() {
+	local dev=$1
 
 	for p in $dev*; do
 		properties=$(udevadm info --query=property --export --name=$p) &&
