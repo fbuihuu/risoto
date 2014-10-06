@@ -8,7 +8,7 @@
 set -e
 
 usage() {
-	echo >&2 "$(basename $0): [-v] [--compressor=<squashfs-comp>] [--tmpdir=<dir>] <config-file> <target>"
+	echo >&2 "$(basename $0): [-v] [--output=<output>] [--compressor=<squashfs-comp>] [--tmpdir=<dir>] <config-file> <target>"
 	exit
 }
 
@@ -208,6 +208,7 @@ tmpdir=$(mktemp -d --tmpdir $(basename $0).XXXXX)
 verbose=false
 compressor=
 conf=
+iso_fname=
 
 while :
 do
@@ -216,6 +217,8 @@ do
 		verbose=true ;;
 	--compressor=*)
 		compressor=${1#--compressor=} ;;
+	--output=*)
+		iso_fname=${1#--output=} ;;
 	--tmpdir=*)
 		clean_tmpdir=false
 		tmpdir=${1#--tmpdir=} ;;
@@ -261,8 +264,10 @@ distribution=$(xchroot lsb_release -ds)
 distribution=$(eval echo $distribution) # drop the stupid double quotes
 
 iso_label=${distributor}_$(date +%Y%m%d)
-iso_fname=${distribution// /-}-live-$(date +%Y%m%d).iso
-iso_fname=$(echo $iso_fname | tr "[:upper:]" "[:lower:]")
+if test -z "$iso_fname"; then
+	iso_fname=${distribution// /-}-live-$(date +%Y%m%d).iso
+	iso_fname=$(echo $iso_fname | tr "[:upper:]" "[:lower:]")
+fi
 
 vmlinux=$rootfs/boot/vmlinuz-*
 initramfs=$rootfs/boot/initr*-*.img
