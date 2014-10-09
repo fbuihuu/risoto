@@ -36,9 +36,10 @@ get_file_arch() {
 	esac
 }
 
-excluded_files=()
+_excluded_files=()
 exclude_file() {
-	excluded_files+=("${1##/}")
+	# drop the leading '/' for mksquashfs.
+	_excluded_files+=("${1##/}")
 }
 
 cleanup_on_exit() {
@@ -221,6 +222,8 @@ do
 	--tmpdir=*)
 		clean_tmpdir=false
 		tmpdir=${1#--tmpdir=} ;;
+	--exclude=*)
+		exclude_file $(readlink -f ${1#--exclude=}) ;;
 	-*)
 		usage ;;
 	*)
@@ -440,6 +443,7 @@ create_rootfs_image() {
 	#
 	mkdir -p $(dirname $rootfs_ro_image)
 
+	# Ignore the *content* of these directories.
 	exclude_file /boot/\*
 	exclude_file /sys/\*
 	exclude_file /proc/\*
@@ -464,7 +468,7 @@ create_rootfs_image() {
 		-noappend \
 		${compressor:+-comp $compressor} \
 		-wildcards \
-		-e "${excluded_files[@]}" >&3
+		-e "${_excluded_files[@]}" >&3
 }
 
 create_iso() {
