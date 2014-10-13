@@ -209,6 +209,7 @@ verbose=false
 compressor=
 conf=
 iso_fname=
+iso_dname=$(pwd)
 
 while :
 do
@@ -237,6 +238,18 @@ pushd . >/dev/null
 test $# -eq 2 ||
 usage
 
+#
+# Make sure if iso filename was passed then it uses a correct path.
+#
+if test -n "$iso_fname"; then
+	iso_dname=$(dirname $iso_fname)
+	test -d "$iso_dname" ||
+	die "invalid path given by --output."
+fi
+
+#
+# Setup 'tmpdir'
+#
 tmpdir=$(readlink -f $tmpdir)
 test -d $tmpdir ||
 die "invalid temporary directory: '$tmpdir'"
