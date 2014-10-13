@@ -204,7 +204,7 @@ prepare_rootfs() {
 # Parse passed options.
 #
 clean_tmpdir=true
-tmpdir=$(mktemp -d --tmpdir $(basename $0).XXXXX)
+tmpdir=
 verbose=false
 compressor=
 conf=
@@ -250,9 +250,16 @@ fi
 #
 # Setup 'tmpdir'
 #
-tmpdir=$(readlink -f $tmpdir)
-test -d $tmpdir ||
-die "invalid temporary directory: '$tmpdir'"
+if test -z "$tmpdir"; then
+	#
+	# By default the working directory, which can be big since it
+	# contains the squashfs image, is put in the output dir.
+	#
+	tmpdir=$(mktemp -d --tmpdir="$iso_dname" $(basename $0).XXXXX)
+else
+	tmpdir=$(readlink -e "$tmpdir") ||
+	die "Invalid temporary directory: '$tmpdir'"
+fi
 
 #
 # Read the config file
