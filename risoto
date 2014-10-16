@@ -256,10 +256,10 @@ if test -z "$tmpdir"; then
 	# contains the squashfs image, is put in the output dir.
 	#
 	tmpdir=$(mktemp -d --tmpdir="$iso_dname" $(basename $0).XXXXX)
-else
-	tmpdir=$(readlink -e "$tmpdir") ||
-	die "Invalid temporary directory: '$tmpdir'"
 fi
+
+tmpdir=$(readlink -e "$tmpdir") ||
+die "Invalid temporary directory: '$tmpdir'"
 
 #
 # Read the config file
