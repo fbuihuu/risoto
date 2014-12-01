@@ -7,7 +7,7 @@
 #
 
 usage() {
-	echo >&2 "$(basename $0): [-v] [--output=<output>] [--compressor=<squashfs-comp>] [--tmpdir=<dir>] <config-file> <target>"
+	echo >&2 "$(basename $0): [-v] [--output=<output>] [--compressor=<squashfs-comp>] [--tmpdir=<dir>] [--exclude=<path>] <config-file> <target>"
 	exit
 }
 
