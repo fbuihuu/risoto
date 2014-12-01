@@ -468,6 +468,7 @@ create_rootfs_image() {
 	exclude_file /sys/\*
 	exclude_file /proc/\*
 	exclude_file /dev/\*
+	exclude_file /mnt/\*
 	exclude_file /etc/fstab
 	test $rootfs = '/' && exclude_file $tmpdir
 
