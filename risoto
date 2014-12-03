@@ -463,8 +463,9 @@ create_rootfs_image() {
 	#
 	mkdir -p $(dirname $rootfs_ro_image)
 
-	# Ignore the *content* of these directories.
-	exclude_file /boot/\*
+	# Ignore the *content* of these directories.  Note: /boot is
+	# not excluded because it contains the initramfs which can be
+	# needed when the system during the shutdown.
 	exclude_file /sys/\*
 	exclude_file /proc/\*
 	exclude_file /dev/\*
