@@ -528,6 +528,16 @@ create_iso $iso_fname $tmpdir ||
 exit
 
 #
+# Try to implant ISO's checksum that could be verified by
+# checkisomd5(1) later.
+#
+if type implantisomd5 &>/dev/null; then
+	echo "Injecting MD5 checksum in the ISO"
+	implantisomd5 $iso_fname ||
+	warn "Failed to implant an MD5 checksum in the ISO image"
+fi
+
+#
 # Show some stats.
 #
 if type iso-info &>/dev/null; then
