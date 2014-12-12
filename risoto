@@ -566,8 +566,8 @@ exit
 # checkisomd5(1) later.
 #
 if type implantisomd5 &>/dev/null; then
-	echo "Injecting MD5 checksum in the ISO"
-	implantisomd5 $iso_fname ||
+	echo "Inserting md5sum into iso image..."
+	implantisomd5  $iso_fname >/dev/null ||
 	warn "Failed to implant an MD5 checksum in the ISO image"
 fi
 
