@@ -7,7 +7,7 @@
 #
 
 usage() {
-	echo >&2 "$(basename $0): [-v] [--output=<output>] [--compressor=<squashfs-comp>] [--tmpdir=<dir>] [--exclude=<path>] <config-file> <target>"
+	echo >&2 "$(basename $0): [-v] [--output=<output>] [--compressor=<squashfs-comp>] [--tmpdir=<dir>] [--exclude=<path>] [--extra-data=<filemap>] <config-file> <target>"
 	exit
 }
 
@@ -210,6 +210,8 @@ compressor=
 conf=
 iso_fname=
 iso_dname=$(pwd)
+data_fmap=/dev/null
+
 
 while :
 do
@@ -225,6 +227,8 @@ do
 		tmpdir=${1#--tmpdir=} ;;
 	--exclude=*)
 		exclude_file $(readlink -f ${1#--exclude=}) ;;
+	--extra-data=*)
+		data_fmap=${1#--extra-data=} ;;
 	-*)
 		usage ;;
 	*)
@@ -269,6 +273,12 @@ test -r "$conf" && source "$conf" ||
 die "Failed to read config file: $conf"
 
 : ${compressor:=$SQUASHFS_COMPRESSOR}
+
+#
+# extra data filemap
+#
+data_fmap=$(readlink -e "$data_fmap") ||
+die "Failed to read extra data filemap: $data_fmap"
 
 #
 # Prepare the target, if needed, so we can access the fs at $rootfs
@@ -457,6 +467,29 @@ install_gummiboot() {
 	popd >/dev/null
 }
 
+install_extra_data() {
+	#
+	# The filemap includes lines having the following format:
+	#
+	#    <SRC>  <DST>  <rsync-options>...
+	#
+	# where <SRC> and <DST> only <DST> is modified before being
+	# passed to rsync(1). Indeed <DST> is an absolute path inside
+	# the iso image.
+	#
+	while read src dst opts; do
+		case $dst in
+		/)	;;
+		/*)	mkdir -p ./$dst ;;
+		*)	warn "filemap includes a relative DST path: $dst"; return
+		esac
+
+		echo "Importing data from $src"
+		rsync -a $opts $src ./$dst || return
+
+	done <"$data_fmap"
+}
+
 create_rootfs_image() {
 	#
 	# generate rootfs squashfs image
@@ -520,6 +553,7 @@ pushd $tmpdir >/dev/null
 install_syslinux &&
 install_isolinux &&
 install_gummiboot &&
+install_extra_data &&
 create_rootfs_image ||
 exit
 popd >/dev/null
@@ -547,7 +581,7 @@ echo
 echo "__________________________________"
 ls -lh $iso_fname
 cd $tmpdir
-tree .
+tree --filelimit=15 .
 echo
 ls -lh $distributor/$arch/rootfs.squashfs \
 	$distributor/boot/$arch/vmlinuz \
