@@ -155,8 +155,11 @@ prepare_device() {
 
 	# Mount all discovered partitions
 	rootdir=$(mktemp -d --tmpdir $(basename $0).rootdir.XXXXX) &&
-	mount -o ro $root $rootdir ||
-	return
+	if ! mount -o ro $root $rootdir; then
+		rootdir=
+		warn "Failed to mount root partition of $root."
+		return 1
+	fi
 
 	if test $esp; then
 		# assume ESP mountpoint is /boot
